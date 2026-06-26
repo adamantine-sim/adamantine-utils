@@ -275,8 +275,8 @@ def set_adamantine_sim_output_freq(filename, freq):
             f_new.write(new_line)
         else:
             f_new.write(line)
-
-    os.remove(filename)
+    f_original.close()
+    f_new.close()
     shutil.move("temp.info", filename)
 
 # ------------------------------------------------------------
@@ -334,7 +334,7 @@ def get_layer_and_scan_labels(sorted_data, layer_limit):
             scan_list.append(scan)
     return layer_list, scan_list
 
-def drip_feed_toolpath_layers(base_filename, target_filename, toolpath_info, toolpath_module, layer_index_to_add, chunk_size, sorted_data, simulation_template_dir, override_dwells=False, end_sim=False, extra_time_at_end=False):
+def drip_feed_toolpath_layers(base_filename, toolpath_info, toolpath_module, layer_index_to_add, chunk_size, layer_limit, sorted_data, simulation_template_dir, override_dwells=False, end_sim=False, extra_time_at_end=False):
     '''
     Adds a new layer or chunk of layers to the toolpath.
     '''
@@ -351,7 +351,8 @@ def drip_feed_toolpath_layers(base_filename, target_filename, toolpath_info, too
         start_time = old_scan_path[-1][0]
 
     # Get the new layer from create_toolpath
-    toolpath_info['selected_layers'] = [layer_index_to_add, layer_index_to_add + chunk_size]
+    last_layer_to_add = min(layer_index_to_add + chunk_size, layer_limit)
+    toolpath_info['selected_layers'] = [layer_index_to_add, last_layer_to_add]
     new_layer, actual_layer_variables = create_toolpath_layers(sorted_data, toolpath_info, simulation_template_dir, override_dwells)
 
     #shifted_new_layer = fix_time_and_height_time_position_power(new_layer, start_time, start_height)
@@ -375,15 +376,15 @@ def drip_feed_toolpath_layers(base_filename, target_filename, toolpath_info, too
     #    buffer = 5.0
     #    new_layer_string = new_layer_string + str(end_time + buffer) + ",0.0,0.0,0.0,0.0\n"
 
-    temp_filename = target_filename + '.tmp'
+    temp_filename = base_filename + '.tmp'
 
     write_event_series(new_toolpath, temp_filename, end_sim)
 
-    os.rename(temp_filename, target_filename)
+    os.rename(temp_filename, base_filename)
     print(end_time)
     return end_time, actual_layer_variables[0]
 
-def drip_feed_toolpath_single_scan(base_filename, target_filename, toolpath_info, toolpath_module, layer_list, scan_list, layer_scan_index, sorted_data, simulation_template_dir, override_dwells=False, end_sim=False, extra_time_at_end=False):
+def drip_feed_toolpath_single_scan(base_filename, toolpath_info, toolpath_module, layer_list, scan_list, layer_scan_index, sorted_data, simulation_template_dir, override_dwells=False, end_sim=False, extra_time_at_end=False):
     '''
     Adds scan data from one file to the toolpath.
     '''
@@ -434,7 +435,7 @@ def drip_feed_toolpath_single_scan(base_filename, target_filename, toolpath_info
     new_scan_path, scan_end_time, additional = create_toolpath_single_scan(filename, plan_data, layer_idx, num_layers, scan_start_time, first_scan_of_layer, last_scan_of_layer, new_tpp, override_dwells, set_dwell_every_n_layers, layer_end_time_discretization, True)
 
     #shifted_new_layer = fix_time_and_height_time_position_power(new_layer, start_time, start_height)
-    shifted_new_path = fix_time_time_position_power([tpp_clean], scan_start_time)
+    shifted_new_path = fix_time_time_position_power([new_scan_path], scan_start_time)
     new_toolpath = old_scan_path + shifted_new_path
 
     # Get the final time (this is the real end of the section, not the padded toolpath)
@@ -453,16 +454,16 @@ def drip_feed_toolpath_single_scan(base_filename, target_filename, toolpath_info
     #    buffer = 5.0
     #    new_layer_string = new_layer_string + str(end_time + buffer) + ",0.0,0.0,0.0,0.0\n"
 
-    temp_filename = target_filename + '.tmp'
+    temp_filename = base_filename + '.tmp'
 
     write_event_series(new_toolpath, temp_filename, end_sim)
 
-    os.rename(temp_filename, target_filename)
+    os.rename(temp_filename, base_filename)
     print(scan_end_time)
 
     return scan_end_time
 
-def get_path_data(simulation_template_dir, target_filename, sorted_data, layer_list, scan_list, layer_scan_index, segment_start_time):
+def get_path_drip_first_segment(simulation_template_dir, target_filename, sorted_data, layer_list, scan_list, layer_scan_index, segment_start_time):
 
     # Layer and scan number, corresponding data for this scan path
     layer_idx = layer_list[layer_scan_index]
@@ -499,6 +500,9 @@ def get_path_data(simulation_template_dir, target_filename, sorted_data, layer_l
 
     # Drip power off entry into file
     dwell_string = str(scan_path_data[0][0]) + ',' + str(scan_path_data[0][1][0]) + ',' + str(scan_path_data[0][1][1]) + ',' + str(scan_path_data[0][1][2]) + ',' + str(scan_path_data[0][2]) + '\n'
+    # Drip in first scan path segment
+    scan_string = str(scan_path_data[1][0]) + ',' + str(scan_path_data[1][1][0]) + ',' + str(scan_path_data[1][1][1]) + ',' + str(scan_path_data[1][1][2]) + ',' + str(scan_path_data[1][2]) + '\n'
+
     temp_filename = target_filename + '.tmp'
     if (layer_scan_index == 0):
         fmode = 'w'
@@ -508,6 +512,7 @@ def get_path_data(simulation_template_dir, target_filename, sorted_data, layer_l
 
     f = open(temp_filename, fmode)
     f.write(dwell_string)
+    f.write(scan_string)
     f.close()
     segment_start_time = segment_start_time + eps
     os.rename(temp_filename, target_filename)
@@ -541,10 +546,10 @@ def drip_feed_segment(segment_num, old_scan_path_data, target_filename, scan_sta
     scan_path_string = time_string + ',' + str(segment_end_loc[0]) + ',' + str(segment_end_loc[1]) + ',' + str(segment_end_loc[2]) + ',' + str(segment_power) + '\n'
     f = open(temp_filename, 'a')
     f.write(scan_path_string)
-    print("Added line ",scan_path_string)
+    #print("Added line ",scan_path_string)
     # If previous segment was not a dwell and the current segment is not a dwell, pad scan with dwell so it ends on an integer multiple of the adamantine output
     if (not currently_dwelling):
-        print("segment end time before padding", segment_end_time)
+        #print("segment end time before padding", segment_end_time)
         remainder = segment_end_time % dwell_time_discretization
         # add only the needed remainder; 0 if already on-grid
         additional = (dwell_time_discretization - remainder) % dwell_time_discretization
@@ -561,8 +566,8 @@ def drip_feed_segment(segment_num, old_scan_path_data, target_filename, scan_sta
                 # Use position of next segment for dwell
                 dwell_string = time_string + ',' + str(old_scan_path_data[segment_num+1][1][0]) + ',' + str(old_scan_path_data[segment_num+1][1][1]) + ',' + str(old_scan_path_data[segment_num+1][1][2]) + ',' + str(0.0) + '\n'
             f.write(dwell_string)
-            print("Added dwell pad line ",dwell_string)
-            print("segment end time after padding", segment_end_time, additional)
+            #print("Added dwell pad line ",dwell_string)
+            #print("segment end time after padding", segment_end_time, additional)
     f.close()
 
     # Rename temporary file to target file
@@ -597,7 +602,7 @@ def drip_feed_dwell_copy(target_filename, old_scan_path_data, dwell_start_time, 
 
     return dwell_end_time
     
-def drip_feed_dwell(base_filename, target_filename, toolpath_info, toolpath_module, dwell_time_discretization):
+def drip_feed_dwell(base_filename, toolpath_info, toolpath_module, dwell_time_discretization):
     '''
     Adds a dwell to the toolpath, which is written in its entirety to a new target scan path file
     '''
@@ -613,16 +618,16 @@ def drip_feed_dwell(base_filename, target_filename, toolpath_info, toolpath_modu
     dwell_loc = old_scan_path[-1][1]
     new_dwell = ((end_time, (dwell_loc[0], dwell_loc[1], dwell_loc[2]), 0.0))
     new_toolpath = old_scan_path + [new_dwell]
-    temp_filename = target_filename + '.tmp'
+    temp_filename = base_filename + '.tmp'
 
     # Don't write SCAN_PATH_END as more dwells may be necessary
     write_event_series(new_toolpath, temp_filename, False)
 
-    os.rename(temp_filename, target_filename)
+    os.rename(temp_filename, base_filename)
 
     return end_time
 
-def drip_feed_end_toolpath(base_filename, target_filename, toolpath_module):
+def drip_feed_end_toolpath(base_filename, toolpath_module):
     '''
     Adds scan path end to the toolpath
     '''
@@ -631,10 +636,10 @@ def drip_feed_end_toolpath(base_filename, target_filename, toolpath_module):
 
     old_scan_path = get_time_position_power_inp(base_filename)
 
-    temp_filename = target_filename + '.tmp'
+    temp_filename = base_filename + '.tmp'
     # Old scan path + SCAN_PATH_END
     write_event_series(old_scan_path, temp_filename, True)
-    os.rename(temp_filename, target_filename)
+    os.rename(temp_filename, base_filename)
     return
 
 def set_adamantine_deposition_time(filename, dwell_time_discretization):
@@ -651,7 +656,8 @@ def set_adamantine_deposition_time(filename, dwell_time_discretization):
         else:
             f_new.write(line)
 
-    os.remove(filename)
+    f_original.close()
+    f_new.close()
     shutil.move("temp.info", filename)
     
 def write_event_series(time_position_power, filename, include_end_message):
@@ -805,7 +811,7 @@ def get_toolpath_info(simulation_template_dir, sorted_data, layer_end_time_discr
     
     # Use print layers to get the layer height - don't store scan path data yet
     temp_base_layers_print = []
-    for fn in range(0,layer_limit+1):
+    for fn in range(0, layer_limit):
         # Assume that "print_layers" is given for each layer, otherwise, take the first component name given to search for a scan path
         if ("print_layers" in sorted_data[0]["components"]):
             comp_name = "print_layers"
@@ -946,7 +952,7 @@ def create_toolpath_layers(sorted_data, toolpath_info, simulation_template_dir, 
     actual_layer_variables = []
 
     for layer_idx in range(*toolpath_info['selected_layers']):
-        print(f'writing layer idx {layer_idx}')
+        print(f'Writing toolpath for layer {layer_idx}')
         temp_store_layer_section = []
         comp_num = 0
         num_comps = len(sorted_data[layer_idx]["components"])
