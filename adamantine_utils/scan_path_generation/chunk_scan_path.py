@@ -41,7 +41,10 @@ if __name__ == "__main__":
     layer_num = 0
     # Write individual layer scan path files
     for line_num in range(first_line_num, len(lines)-1):
-        line_parts = lines[line_num].split()
+        if (scan_format == "segment"):
+            line_parts = lines[line_num].split()
+        else:
+            line_parts = lines[line_num].split(",")
         current_scan_z = float(line_parts[3])
         if (current_scan_z != last_scan_z):
             lines_this_layer = lines[first_line_num:line_num]

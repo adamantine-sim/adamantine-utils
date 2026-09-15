@@ -56,7 +56,7 @@ if __name__ == "__main__":
             scan_distance = np.sqrt((segment_x_float-last_segment_x_float)**2 + (segment_y_float-last_segment_y_float)**2 + (segment_z_float-last_segment_z_float)**2)
             scan_time = scan_distance / scan_speed
             segment_endtime = total_path_time + scan_time
-        event_data = str(segment_endtime) + ' ' + segment_x + ' ' + segment_y + ' ' + segment_z + ' ' + nominal_power + '\n'
+        event_data = str(segment_endtime) + ',' + segment_x + ',' + segment_y + ',' + segment_z + ',' + nominal_power + '\n'
         new_scan_path_data[counter] = event_data
         counter = counter+1
         total_path_time = segment_endtime
