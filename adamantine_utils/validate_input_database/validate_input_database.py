@@ -116,7 +116,7 @@ def _validate_boundary(
     boundary_database = _require_object(database, "boundary")
     uses_convective = False
     uses_radiative = False
-    clamped_boundary = False
+    mechanical_dirichlet_bc = False
 
     for boundary_name, boundary_entry in boundary_database.items():
         line_types = set()
@@ -167,34 +167,45 @@ def _validate_boundary(
                 line_types.add("convective")
                 uses_convective = True
                 thermal_bc = True
-            elif boundary_type == "clamped":
-                if "traction_free" in line_types:
+            elif boundary_type in {"clamped", "traction_free", "displacement"}:
+                if mechanical_bc:
                     raise ValidationError(
                         "Mechanical boundary conditions cannot be combined "
                         "together."
                     )
-                line_types.add("clamped")
-                mechanical_bc = True
-            elif boundary_type == "traction_free":
-                if "clamped" in line_types:
-                    raise ValidationError(
-                        "Mechanical boundary conditions cannot be combined "
-                        "together."
-                    )
-                line_types.add("traction_free")
+                line_types.add(boundary_type)
                 mechanical_bc = True
             else:
                 raise ValidationError("Unknown boundary type.")
 
-        if "clamped" in line_types:
-            clamped_boundary = True
+        if "displacement" in line_types:
+            if not boundary_name.startswith("boundary_"):
+                raise ValidationError(
+                    "Displacement requires an explicit boundary_<id> section."
+                )
+            components = boundary_entry.get("displacement")
+            if not isinstance(components, dict) or not components:
+                raise ValidationError("Displacement requires a component formula.")
+            dimension = _as_unsigned(_get(database, "geometry.dim"), "geometry.dim")
+            valid_components = {"x", "y", "z"} if dimension == 3 else {"x", "z"}
+            for component, formula in components.items():
+                if component not in valid_components:
+                    raise ValidationError(f"Invalid displacement component: {component}")
+                # Boost Property Tree treats JSON scalars as leaf text.
+                if isinstance(formula, (dict, list)) or formula == "":
+                    raise ValidationError("Empty displacement formula.")
+
+        if line_types & {"clamped", "displacement"}:
+            mechanical_dirichlet_bc = True
         if use_thermal_physics and not thermal_bc:
             raise ValidationError("Missing thermal boundary condition.")
         if use_mechanical_physics and not mechanical_bc:
             raise ValidationError("Missing mechanical boundary condition.")
 
-    if use_mechanical_physics and not clamped_boundary:
-        raise ValidationError("At least one boundary needs to be clamped!")
+    if use_mechanical_physics and not mechanical_dirichlet_bc:
+        raise ValidationError(
+            "At least one boundary needs a prescribed displacement or clamping."
+        )
 
     return uses_convective, uses_radiative
 
@@ -461,10 +472,10 @@ def validate_input_database(database: Dict[str, Any]) -> None:
         beam_type = _as_string(
             _get(beam, "type"), f"sources.{beam_name}.type"
         )
-        if beam_type.lower() not in {"goldak", "electron_beam", "cube"}:
+        if beam_type.lower() not in {"goldak", "electron_beam", "cube", "gaussian"}:
             raise ValidationError(
                 f"Beam type, '{beam_type}', is not recognized. Valid options are: "
-                "'goldak', 'electron_beam', and 'cube'."
+                "'goldak', 'electron_beam', 'cube', and 'gaussian'."
             )
         if "scan_path_file" not in beam:
             raise ValidationError("A scan path file for each beam must be given.")

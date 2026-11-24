@@ -104,6 +104,74 @@ class ValidateInputDatabaseTest(unittest.TestCase):
         database["boundary"]["type"] = "radiative"
         self.assert_invalid(database)
 
+    def test_gaussian_beam_type_is_case_insensitive(self):
+        for beam_type in ("gaussian", "GaUsSiAn"):
+            with self.subTest(beam_type=beam_type):
+                database = copy.deepcopy(self.database)
+                database["sources"]["beam_0"]["type"] = beam_type
+                validate_input_database(database)
+
+    def test_unknown_beam_type_reports_gaussian_as_valid(self):
+        database = copy.deepcopy(self.database)
+        database["sources"]["beam_0"]["type"] = "unknown"
+        with self.assertRaisesRegex(
+            ValidationError, "Valid options are: .*'gaussian'"
+        ):
+            validate_input_database(database)
+
+    def test_displacement_boundary_replaces_clamping(self):
+        for dim, components in (
+            (2, {"x": "t*z", "z": 0}),
+            (3, {"x": "t*z", "y": "0", "z": 0}),
+        ):
+            with self.subTest(dim=dim):
+                database = copy.deepcopy(self.database)
+                database["physics"]["mechanical"] = True
+                database["geometry"]["dim"] = dim
+                database["boundary"] = {
+                    "boundary_0": {
+                        "type": "adiabatic,displacement",
+                        "displacement": components,
+                    },
+                    "boundary_1": {"type": "adiabatic,traction_free"},
+                }
+                validate_input_database(database)
+
+    def test_invalid_displacement_boundary(self):
+        for section, entry, message in (
+            ("type", "adiabatic,displacement", "explicit boundary"),
+            ("boundary_0", {"type": "adiabatic,displacement"}, "component formula"),
+            (
+                "boundary_0",
+                {"type": "adiabatic,displacement", "displacement": {}},
+                "component formula",
+            ),
+            (
+                "boundary_0",
+                {"type": "adiabatic,displacement", "displacement": {"y": "0"}},
+                "Invalid displacement component: y",
+            ),
+            (
+                "boundary_0",
+                {"type": "adiabatic,displacement", "displacement": {"x": ""}},
+                "Empty displacement formula",
+            ),
+            (
+                "boundary_0",
+                {"type": "adiabatic,clamped,displacement", "displacement": {"x": "0"}},
+                "cannot be combined",
+            ),
+            ("type", "adiabatic,clamped,clamped", "cannot be combined"),
+            ("type", "adiabatic,traction_free", "needs a prescribed displacement"),
+        ):
+            with self.subTest(section=section, entry=entry):
+                database = copy.deepcopy(self.database)
+                database["physics"]["mechanical"] = True
+                database["geometry"]["dim"] = 2
+                database["boundary"] = {section: entry}
+                with self.assertRaisesRegex(ValidationError, message):
+                    validate_input_database(database)
+
     def test_cli_reads_json_and_returns_status(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as input_file:
             json.dump(self.database, input_file)
